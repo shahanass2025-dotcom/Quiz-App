@@ -1,84 +1,17 @@
+
 import streamlit as st
-import random
-import io
+import requests
 
-# PyPDF2 is used to extract raw text from the uploaded PDF.
-# Install with: pip install streamlit PyPDF2
-import PyPDF2
+BACKEND_URL = "http://localhost:8000"  # change if backend runs elsewhere
 
-st.set_page_config(page_title="PDF Quiz Generator", page_icon="📄", layout="centered")
+st.set_page_config(page_title="PDF/Word Quiz Generator", page_icon="📄", layout="centered")
 
 
 # =====================================================================
-# 1) PDF TEXT EXTRACTION
-# =====================================================================
-def extract_text_from_pdf(uploaded_file) -> str:
-    """Reads an uploaded PDF (Streamlit UploadedFile) and returns its raw text."""
-    reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getvalue()))
-    text = ""
-    for page in reader.pages:
-        page_text = page.extract_text() or ""
-        text += page_text + "\n"
-    return text
-
-
-# =====================================================================
-# 2) QUESTION GENERATION — replace this with your own logic
-# =====================================================================
-def generate_questions_from_text(pdf_text: str, num_questions: int = 5) -> list[dict]:
-    """
-    Replace the body of this function with your own logic to turn `pdf_text`
-    into a list of multiple-choice questions.
-
-    Each question MUST be a dict shaped like this:
-        {
-            "question": "What is ... ?",
-            "options": ["Option A", "Option B", "Option C", "Option D"],
-            "answer": "Option B"   # must exactly match one of the options
-        }
-
-    You can call an LLM here (e.g. Claude/OpenAI), run your own NLP pipeline,
-    or anything else — as long as you return a list of dicts in this shape.
-
-    Below is a placeholder implementation so the app runs end-to-end before
-    you plug in real logic. It just creates dummy fill-in-the-blank style
-    questions out of sentences in the PDF, purely so you can test the UI flow.
-    """
-    sentences = [s.strip() for s in pdf_text.replace("\n", " ").split(".") if len(s.strip()) > 40]
-    random.shuffle(sentences)
-
-    questions = []
-    for sentence in sentences[:num_questions]:
-        words = sentence.split()
-        if len(words) < 6:
-            continue
-        blank_index = random.randint(3, len(words) - 2)
-        correct_word = words[blank_index]
-        question_text = " ".join(
-            words[:blank_index] + ["____"] + words[blank_index + 1:]
-        )
-        # Dummy distractors — replace with real wrong-answer logic
-        distractors = ["example", "placeholder", "unknown"]
-        options = [correct_word] + distractors
-        random.shuffle(options)
-
-        questions.append(
-            {
-                "question": f"Fill in the blank: \"{question_text}\"",
-                "options": options,
-                "answer": correct_word,
-            }
-        )
-
-    return questions
-
-
-# =====================================================================
-# 3) SESSION STATE SETUP
+# SESSION STATE SETUP
 # =====================================================================
 defaults = {
     "stage": "upload",   # "upload" -> "quiz" -> "results"
-    "pdf_text": "",
     "questions": [],
     "current_q": 0,
     "score": 0,
@@ -130,33 +63,60 @@ def next_question():
 
 
 # =====================================================================
-# 4) UI — STAGE: UPLOAD
+# CALL BACKEND
 # =====================================================================
-st.title("📄 PDF Quiz Generator")
+def call_backend_generate_quiz(uploaded_file, num_questions: int) -> list[dict]:
+    files = {
+        "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
+    }
+    params = {"num_questions": num_questions}
+
+    response = requests.post(
+        f"{BACKEND_URL}/generate-quiz",
+        files=files,
+        params=params,
+        timeout=60,
+    )
+
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail", response.text)
+        except Exception:
+            detail = response.text
+        raise RuntimeError(detail)
+
+    return response.json()["questions"]
+
+
+# =====================================================================
+# UI — STAGE: UPLOAD
+# =====================================================================
+st.title("📄 PDF/Word Quiz Generator")
 
 if st.session_state.stage == "upload":
-    st.write("Upload a PDF and a multiple-choice quiz will be generated from its content.")
+    st.write("Upload a PDF or Word document. The backend will generate a multiple-choice quiz from its content.")
 
-    uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
+    uploaded_file = st.file_uploader("Upload your file", type=["pdf", "docx"])
     num_questions = st.slider("Number of questions", min_value=3, max_value=15, value=5)
 
     if uploaded_file is not None:
         if st.button("Generate Quiz", type="primary"):
-            with st.spinner("Reading PDF and generating questions..."):
-                pdf_text = extract_text_from_pdf(uploaded_file)
-                if not pdf_text.strip():
-                    st.error("Couldn't extract any text from this PDF. Try a different file.")
+            with st.spinner("Sending file to backend and generating questions..."):
+                try:
+                    questions = call_backend_generate_quiz(uploaded_file, num_questions)
+                except requests.exceptions.ConnectionError:
+                    st.error("Could not reach the backend. Make sure it's running at " + BACKEND_URL)
+                except RuntimeError as e:
+                    st.error(f"Backend error: {e}")
                 else:
-                    st.session_state.pdf_text = pdf_text
-                    questions = generate_questions_from_text(pdf_text, num_questions)
                     if not questions:
-                        st.error("Couldn't generate questions from this PDF's content.")
+                        st.error("No questions were generated from this file.")
                     else:
                         go_to_quiz(questions)
                         st.rerun()
 
 # =====================================================================
-# 5) UI — STAGE: QUIZ
+# UI — STAGE: QUIZ
 # =====================================================================
 elif st.session_state.stage == "quiz":
     total = len(st.session_state.questions)
@@ -196,7 +156,7 @@ elif st.session_state.stage == "quiz":
     st.caption(f"Score so far: {st.session_state.score} / {len(st.session_state.answers)}")
 
 # =====================================================================
-# 6) UI — STAGE: RESULTS
+# UI — STAGE: RESULTS
 # =====================================================================
 elif st.session_state.stage == "results":
     total = len(st.session_state.questions)
@@ -211,9 +171,9 @@ elif st.session_state.stage == "results":
     elif pct >= 70:
         st.write("Great job!")
     elif pct >= 40:
-        st.write("Decent effort — review the PDF and try again.")
+        st.write("Decent effort — review the document and try again.")
     else:
-        st.write("Worth another read-through of the PDF.")
+        st.write("Worth another read-through of the document.")
 
     st.divider()
     st.subheader("Review your answers")
@@ -224,6 +184,6 @@ elif st.session_state.stage == "results":
             st.write(f"Correct answer: **{a['correct']}**")
 
     st.divider()
-    if st.button("Upload a New PDF", type="primary"):
+    if st.button("Upload a New File", type="primary"):
         reset_to_upload()
         st.rerun()
