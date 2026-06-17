@@ -1,189 +1,194 @@
+"""
+Streamlit landing page UI — "Quiz Maker from PDF"
+Matches the reference design (upload box, red CTA, trust line, social proof)
+but without the top navigation bar.
+
+Run with:
+    pip install streamlit
+    streamlit run landing.py
+"""
 
 import streamlit as st
-import requests
 
-BACKEND_URL = "http://localhost:8000"  # change if backend runs elsewhere
-
-st.set_page_config(page_title="PDF/Word Quiz Generator", page_icon="📄", layout="centered")
-
+st.set_page_config(page_title="PDFQuiz — Quiz Maker from PDF", page_icon="📄", layout="centered")
 
 # =====================================================================
-# SESSION STATE SETUP
+# STYLES
 # =====================================================================
-defaults = {
-    "stage": "upload",   # "upload" -> "quiz" -> "results"
-    "questions": [],
-    "current_q": 0,
-    "score": 0,
-    "answers": [],
-    "selected_option": None,
-    "submitted": False,
-}
-for key, value in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+st.markdown(
+    """
+    <style>
+        /* Hide default Streamlit chrome */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
 
-
-def reset_to_upload():
-    for key, value in defaults.items():
-        st.session_state[key] = value
-
-
-def go_to_quiz(questions):
-    st.session_state.questions = questions
-    st.session_state.stage = "quiz"
-    st.session_state.current_q = 0
-    st.session_state.score = 0
-    st.session_state.answers = []
-    st.session_state.selected_option = None
-    st.session_state.submitted = False
-
-
-def submit_answer():
-    q = st.session_state.questions[st.session_state.current_q]
-    selected = st.session_state.selected_option
-    is_correct = selected == q["answer"]
-    if is_correct:
-        st.session_state.score += 1
-    st.session_state.answers.append(
-        {
-            "question": q["question"],
-            "selected": selected,
-            "correct": q["answer"],
-            "is_correct": is_correct,
+        .block-container {
+            padding-top: 4rem;
+            max-width: 760px;
         }
-    )
-    st.session_state.submitted = True
 
+        .wordmark {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: #111111;
+            margin-bottom: 2.5rem;
+            text-align: left;
+        }
 
-def next_question():
-    st.session_state.current_q += 1
-    st.session_state.selected_option = None
-    st.session_state.submitted = False
+        .hero-title {
+            text-align: center;
+            font-size: 3.2rem;
+            font-weight: 700;
+            color: #111111;
+            line-height: 1.1;
+            margin-bottom: 0.6rem;
+        }
 
+        .hero-subtitle {
+            text-align: center;
+            font-size: 1.15rem;
+            color: #6b7280;
+            margin-bottom: 2.5rem;
+        }
+
+        /* Upload dropzone look */
+        .upload-box {
+            border: 2px dashed #d1d5db;
+            border-radius: 14px;
+            background-color: #fafafa;
+            padding: 3rem 2rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .upload-icons {
+            font-size: 2rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .upload-text {
+            color: #6b7280;
+            font-size: 1rem;
+            margin-bottom: 0.2rem;
+        }
+
+        .upload-subtext {
+            color: #9ca3af;
+            font-size: 0.85rem;
+            margin-bottom: 1.2rem;
+        }
+
+        div[data-testid="stFileUploaderDropzone"] {
+            background-color: transparent;
+            border: none;
+        }
+
+        /* Red primary buttons */
+        div.stButton > button[kind="primary"] {
+            background-color: #e11d2e;
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 0.7rem 1.6rem;
+            border-radius: 8px;
+            width: 100%;
+        }
+        div.stButton > button[kind="primary"]:hover {
+            background-color: #c11626;
+            color: white;
+        }
+
+        .trust-line {
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.85rem;
+            margin-top: 1.2rem;
+            margin-bottom: 3.5rem;
+        }
+
+        .social-proof-heading {
+            text-align: center;
+            font-size: 2.4rem;
+            font-weight: 800;
+            color: #111111;
+            margin-bottom: 1rem;
+        }
+
+        .social-proof-line {
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.95rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # =====================================================================
-# CALL BACKEND
+# SESSION STATE
 # =====================================================================
-def call_backend_generate_quiz(uploaded_file, num_questions: int) -> list[dict]:
-    files = {
-        "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
-    }
-    params = {"num_questions": num_questions}
-
-    response = requests.post(
-        f"{BACKEND_URL}/generate-quiz",
-        files=files,
-        params=params,
-        timeout=60,
-    )
-
-    if response.status_code != 200:
-        try:
-            detail = response.json().get("detail", response.text)
-        except Exception:
-            detail = response.text
-        raise RuntimeError(detail)
-
-    return response.json()["questions"]
-
+if "uploaded_file" not in st.session_state:
+    st.session_state.uploaded_file = None
 
 # =====================================================================
-# UI — STAGE: UPLOAD
+# WORDMARK (no nav links, per request)
 # =====================================================================
-st.title("📄 PDF/Word Quiz Generator")
-
-if st.session_state.stage == "upload":
-    st.write("Upload a PDF or Word document. The backend will generate a multiple-choice quiz from its content.")
-
-    uploaded_file = st.file_uploader("Upload your file", type=["pdf", "docx"])
-    num_questions = st.slider("Number of questions", min_value=3, max_value=15, value=5)
-
-    if uploaded_file is not None:
-        if st.button("Generate Quiz", type="primary"):
-            with st.spinner("Sending file to backend and generating questions..."):
-                try:
-                    questions = call_backend_generate_quiz(uploaded_file, num_questions)
-                except requests.exceptions.ConnectionError:
-                    st.error("Could not reach the backend. Make sure it's running at " + BACKEND_URL)
-                except RuntimeError as e:
-                    st.error(f"Backend error: {e}")
-                else:
-                    if not questions:
-                        st.error("No questions were generated from this file.")
-                    else:
-                        go_to_quiz(questions)
-                        st.rerun()
+st.markdown('<div class="wordmark">PDFQuiz</div>', unsafe_allow_html=True)
 
 # =====================================================================
-# UI — STAGE: QUIZ
+# HERO
 # =====================================================================
-elif st.session_state.stage == "quiz":
-    total = len(st.session_state.questions)
-    current = st.session_state.current_q
-    q = st.session_state.questions[current]
+st.markdown('<div class="hero-title">Quiz Maker from PDF</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-subtitle">Upload a PDF and generate a quiz using AI</div>', unsafe_allow_html=True)
 
-    st.progress(current / total, text=f"Question {current + 1} of {total}")
-    st.subheader(q["question"])
+# =====================================================================
+# UPLOAD BOX
+# =====================================================================
+st.markdown(
+    """
+    <div class="upload-box">
+        <div class="upload-icons">📄 → 📋</div>
+        <div class="upload-text">Click to upload or drag and drop</div>
+        <div class="upload-subtext">PDF (MAX. 10MB)</div>
+    """,
+    unsafe_allow_html=True,
+)
 
-    if not st.session_state.submitted:
-        choice = st.radio(
-            "Choose your answer:",
-            q["options"],
-            index=None,
-            key=f"radio_{current}",
-        )
-        st.session_state.selected_option = choice
+uploaded_file = st.file_uploader(
+    "Upload PDF",
+    type=["pdf"],
+    label_visibility="collapsed",
+)
+st.session_state.uploaded_file = uploaded_file
 
-        if st.button("Submit", type="primary", disabled=choice is None):
-            submit_answer()
-            st.rerun()
+st.markdown("</div>", unsafe_allow_html=True)
+
+# =====================================================================
+# CTA BUTTON
+# =====================================================================
+clicked = st.button("Convert PDF to Quiz →", type="primary", use_container_width=True)
+
+if clicked:
+    if st.session_state.uploaded_file is None:
+        st.warning("Please upload a PDF first.")
     else:
-        last = st.session_state.answers[-1]
-        if last["is_correct"]:
-            st.success(f"✅ Correct! The answer is **{last['correct']}**.")
-        else:
-            st.error(f"❌ Incorrect. You selected **{last['selected']}**. The correct answer is **{last['correct']}**.")
-
-        button_label = "Next Question" if current + 1 < total else "See Results"
-        if st.button(button_label, type="primary"):
-            if current + 1 < total:
-                next_question()
-            else:
-                st.session_state.stage = "results"
-            st.rerun()
-
-    st.caption(f"Score so far: {st.session_state.score} / {len(st.session_state.answers)}")
+        st.success(f"Got it! '{st.session_state.uploaded_file.name}' is ready to be converted.")
+        # Hook up your quiz-generation flow / backend call here.
 
 # =====================================================================
-# UI — STAGE: RESULTS
+# TRUST LINE
 # =====================================================================
-elif st.session_state.stage == "results":
-    total = len(st.session_state.questions)
-    score = st.session_state.score
-    pct = round((score / total) * 100) if total else 0
+st.markdown(
+    '<div class="trust-line">🛡️ Your files will be securely handled by PDF2Quiz servers and deleted after the quiz creation.</div>',
+    unsafe_allow_html=True,
+)
 
-    st.header("🎉 Quiz Complete!")
-    st.subheader(f"Your score: {score} / {total} ({pct}%)")
-
-    if pct == 100:
-        st.balloons()
-    elif pct >= 70:
-        st.write("Great job!")
-    elif pct >= 40:
-        st.write("Decent effort — review the document and try again.")
-    else:
-        st.write("Worth another read-through of the document.")
-
-    st.divider()
-    st.subheader("Review your answers")
-    for i, a in enumerate(st.session_state.answers, start=1):
-        icon = "✅" if a["is_correct"] else "❌"
-        with st.expander(f"{icon} Q{i}: {a['question']}"):
-            st.write(f"Your answer: **{a['selected']}**")
-            st.write(f"Correct answer: **{a['correct']}**")
-
-    st.divider()
-    if st.button("Upload a New File", type="primary"):
-        reset_to_upload()
-        st.rerun()
+# =====================================================================
+# SOCIAL PROOF
+# =====================================================================
+st.markdown('<div class="social-proof-heading">Students ❤️ it</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="social-proof-line">Join 100,000+ students and professionals using AI to verify their knowledge!</div>',
+    unsafe_allow_html=True,
+)
